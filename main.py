@@ -1,10 +1,15 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware # <-- NUEVA IMPORTACIÓN
 from pydantic import BaseModel
 import google.generativeai as genai
 
-# 1. Configura tu llave de acceso (Recuerda poner tu clave real)
-genai.configure(api_key="AIzaSyBbP_2ErPkYkUr6JGUTAdC7e0VRSCX3dZY")
+
+
+
+api_key_env = os.environ.get("GEMINI_API_KEY")
+genai.configure(api_key=api_key_env)
 
 # 2. Configuramos la personalidad de la IA
 instruccion = """
