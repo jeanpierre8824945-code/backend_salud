@@ -24,6 +24,7 @@ httptools==0.7.1
 idna==3.11
 proto-plus==1.27.1
 protobuf==5.29.6
+psycopg2-binary==2.9.12
 pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==3.0

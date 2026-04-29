@@ -1,4 +1,16 @@
+# Python
 venv/
 __pycache__/
-.env
 *.pyc
+serena.db
+
+# Ionic / Angular
+node_modules/
+www/
+android/
+ios/
+.sourcemaps/
+
+# Otros
+.env
+.DS_Store
