@@ -1,8 +1,10 @@
 import os
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import google.generativeai as genai
+from dotenv import load_dotenv
+from datetime import datetime
 
 # --- IMPORTACIONES PARA LA BASE DE DATOS ---
 from sqlalchemy import create_engine, Column, Integer, String
@@ -11,8 +13,10 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session
 # ==========================================
 # CONFIGURACIÓN DE GEMINI IA
 # ==========================================
+load_dotenv()  # Carga las variables del archivo .env antes de leerlas
 api_key_env = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=api_key_env)
+
 
 
 # ==========================================
@@ -31,14 +35,17 @@ app.add_middleware(
 # ==========================================
 # CONFIGURACIÓN DE LA BASE DE DATOS
 # ==========================================
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./serena.db")
+# --- Conexión anterior (PostgreSQL en Render) ---
+# DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./serena.db")
+# if DATABASE_URL.startswith("postgres://"):
+#     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# --- Conexión local SQLite ---
+SQLALCHEMY_DATABASE_URL = "sqlite:///./serena_local.db"
 
 engine = create_engine(
-    DATABASE_URL, 
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False}
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -215,15 +222,27 @@ def agendar_cita(cita: CitaRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/chat")
 def conversar_con_ia(request: ChatRequest):
-    # 2. Refinamos la instrucción para que NO sea un robot
+    # 2. Instrucciones base (System Prompt) para mentor académico y orientador emocional
     instruccion_base = f"""
-    Eres SERENA, una IA de apoyo emocional para la UDEC. Hablas con {request.nombre}.
-    
-    REGLAS DE ORO PARA NO SER UN ROBOT:
-    1. NO SALUDES en cada mensaje. Si ya saludaste en el historial, ve directo a la charla.
-    2. Habla de forma natural, como un amigo o mentor, NO como un cuestionario médico.
-    3. Usa el nombre del usuario solo una vez cada tanto, no en todas las frases.
-    4. Integra las preguntas de PHQ-9 o GAD-7 de forma orgánica. Si el usuario dice "tengo muchas tareas", no preguntes "dirías que te has sentido así 2 semanas", mejor di: "Uff, la carga académica en la UDEC es pesada. ¿Eso te ha quitado el sueño o las ganas de hacer otras cosas?"
+    Hoy es {datetime.now().strftime("%Y-%m-%d")}. Tienes consciencia del tiempo. Cuando el usuario te pida agendar una cita sin especificar el año, utiliza SIEMPRE el año y mes actuales.
+
+    Eres SERENA, una IA que actúa como mentor académico y orientador emocional para estudiantes universitarios. Estás conversando con {request.nombre}.
+
+    CATÁLOGO DE ESPECIALISTAS:
+    - esp1: Dra. Ana García (Ansiedad y Estrés Académico)
+    - esp2: Dr. Carlos Mendez (Depresión y Bienestar Emocional)
+    - esp3: Dra. María Silva (Relaciones y Autoestima)
+
+    DIRECTRICES PRINCIPALES:
+    1. EMPATÍA Y ESCUCHA ACTIVA: Conéctate de forma cálida, humana y comprensiva. Valida siempre las emociones y preocupaciones del estudiante sin juzgarlo.
+    2. CONCISIÓN: Sé breve, claro y ve directo al punto. Evita respuestas excesivamente largas o abrumadoras; ofrece apoyo digerible y práctico.
+    3. VERACIDAD Y RIGOR: Sé honesto y no inventes información bajo ninguna circunstancia. Si no tienes certeza sobre algún dato académico, institucional o técnico, admítelo con transparencia.
+    4. CANALIZACIÓN A SERENA: Si detectas estrés, ansiedad, sobrecarga o inquietudes académicas, orienta de inmediato al estudiante a explorar y apoyarse en las herramientas de la plataforma SERENA (tests de bienestar, recursos prácticos como técnicas de estudio y pausas activas, y agendamiento de citas de orientación o apoyo).
+    5. COMUNICACIÓN NATURAL:
+       - No saludes repetidamente en cada intervención si la charla ya está en progreso.
+       - No uses el nombre del estudiante en cada oración.
+       - Mantén un tono de mentor accesible y cercano, evitando sonar como un formulario médico rígido.
+    6. AGENDAMIENTO DE CITAS INTELIGENTE: Cuando el usuario exprese malestar y necesite apoyo profesional, analiza su problema, explícale brevemente por qué un especialista del CATÁLOGO DE ESPECIALISTAS (o dos) sería ideal para su caso, y pregúntale a quién prefiere. Una vez que el usuario elija al doctor y acuerden la fecha (YYYY-MM-DD) y hora (HH:MM), responde con naturalidad y añade OBLIGATORIAMENTE al final de tu respuesta esta etiqueta exacta: [AGENDAR:ID_ESPECIALISTA:YYYY-MM-DD:HH:MM]. Ejemplo: [AGENDAR:esp2:2026-10-05:14:00]. Nunca muestres esta etiqueta si no han confirmado todos los datos.
     """
 
     modos_tono = {
@@ -235,7 +254,7 @@ def conversar_con_ia(request: ChatRequest):
     prompt_final = f"{instruccion_base}\nPersonalidad: {modos_tono.get(request.tono, 'empatico')}"
 
     modelo_udec = genai.GenerativeModel(
-        'gemini-2.5-flash',
+        'gemini-3.5-flash-lite',
         system_instruction=prompt_final
     )
 
@@ -261,8 +280,8 @@ def conversar_con_ia(request: ChatRequest):
             "alerta_crisis": es_crisis
         }
     except Exception as e:
-        print(f"Error: {e}")
-        return {"respuesta_ia": "Se me cruzaron los cables, ¿me repites?", "alerta_crisis": False}
+        print(f"Error al llamar a la IA: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/stats")
 def obtener_estadisticas():
@@ -284,12 +303,24 @@ def obtener_mis_citas(correo: str, db: Session = Depends(get_db)):
     
     # Formateamos la lista para enviarla al celular
     citas_formateadas = [
-        {"especialista_id": c.especialista_id, "fecha": c.fecha, "hora": c.hora} 
+        {"id": c.id, "especialista_id": c.especialista_id, "fecha": c.fecha, "hora": c.hora} 
         for c in citas
     ]
     
     return {"citas": citas_formateadas}
 
+
+@app.delete("/api/cancelar-cita/{cita_id}")
+def cancelar_cita(cita_id: int, db: Session = Depends(get_db)):
+    cita = db.query(CitaDB).filter(CitaDB.id == cita_id).first()
+    
+    if not cita:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+        
+    db.delete(cita)
+    db.commit()
+    
+    return {"exito": True, "mensaje": "Cita cancelada"}
 
 
 @app.delete("/api/eliminar-usuario/{correo}")
